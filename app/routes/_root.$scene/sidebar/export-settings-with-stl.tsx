@@ -20,6 +20,8 @@ import '@esri/calcite-components/dist/components/calcite-input-text';
 import '@esri/calcite-components/dist/components/calcite-label';
 import '@esri/calcite-components/dist/components/calcite-select';
 import '@esri/calcite-components/dist/components/calcite-option';
+import '@esri/calcite-components/dist/components/calcite-segmented-control';
+import '@esri/calcite-components/dist/components/calcite-segmented-control-item';
 import {
   CalciteBlock,
   CalciteButton,
@@ -27,8 +29,8 @@ import {
   CalciteIcon,
   CalciteInputText,
   CalciteLabel,
-  CalciteSelect,
-  CalciteOption,
+  CalciteSegmentedControl,
+  CalciteSegmentedControlItem,
 } from "@esri/calcite-components-react";
 import { useScene } from "../../../arcgis/components/maps/web-scene/scene-context";
 import { useAccessorValue } from "../../../arcgis/reactive-hooks";
@@ -186,14 +188,32 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
         <li>
           <CalciteLabel scale="s">
             <p className="font-medium">Export format</p>
-            <CalciteSelect
+            <CalciteSegmentedControl
               scale="s"
-              onCalciteSelectChange={(e) => setExportFormat(e.target.value as ExportFormat)}
+              onCalciteSegmentedControlChange={(e) => setExportFormat(e.target.value as ExportFormat)}
             >
-              <CalciteOption value="glb">GLB (3D Graphics)</CalciteOption>
-              <CalciteOption value="stl">STL (3D Printing)</CalciteOption>
-            </CalciteSelect>
+              <CalciteSegmentedControlItem 
+                value="glb" 
+                checked={exportFormat === 'glb'}
+              >
+                <CalciteIcon icon="shapes" scale="s" slot="icon-start" />
+                GLB
+              </CalciteSegmentedControlItem>
+              <CalciteSegmentedControlItem 
+                value="stl" 
+                checked={exportFormat === 'stl'}
+              >
+                <CalciteIcon icon="print" scale="s" slot="icon-start" />
+                STL
+              </CalciteSegmentedControlItem>
+            </CalciteSegmentedControl>
           </CalciteLabel>
+          {exportFormat === 'stl' && (
+            <div className="mt-1 p-2 bg-blue-50 rounded text-xs text-blue-800">
+              <CalciteIcon icon="information" scale="s" className="inline mr-1" />
+              STL format is optimized for 3D printing
+            </div>
+          )}
         </li>
         <li>
           <CalciteLabel scale="s">
@@ -239,13 +259,6 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
       >
         {exportButtonText}
       </CalciteButton>
-
-      {exportFormat === 'stl' && (
-        <div className="mt-2 p-3 bg-blue-50 rounded text-xs text-blue-800">
-          <CalciteIcon icon="information" scale="s" className="inline mr-1" />
-          STL format is optimized for 3D printing. All geometries will be merged and textures removed.
-        </div>
-      )}
     </CalciteBlock>
   );
 }
