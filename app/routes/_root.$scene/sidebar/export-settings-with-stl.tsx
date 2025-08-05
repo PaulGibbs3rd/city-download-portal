@@ -186,11 +186,15 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
     >
       <ul className="space-y-4">
         <li>
-          <CalciteLabel scale="s">
+          <CalciteLabel 
+            scale="s"
+            onClick={(e) => e.stopPropagation()}
+          >
             <p className="font-medium">Export format</p>
             <CalciteSegmentedControl
               scale="s"
               onCalciteSegmentedControlChange={(e) => setExportFormat(e.target.value as ExportFormat)}
+              onClick={(e) => e.stopPropagation()}
             >
               <CalciteSegmentedControlItem 
                 value="glb" 
@@ -216,7 +220,10 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
           )}
         </li>
         <li>
-          <CalciteLabel scale="s">
+          <CalciteLabel 
+            scale="s"
+            onClick={(e) => e.stopPropagation()}
+          >
             <p className="font-medium">File name</p>
             <CalciteInputText
               ref={filenameInputRef}
@@ -224,14 +231,20 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
               value={filename}
               onCalciteInputTextInput={(e) => setFilename(e.target.value)}
               placeholder="Enter filename"
+              onClick={(e) => e.stopPropagation()}
             />
           </CalciteLabel>
         </li>
         <li>
-          <CalciteLabel scale="s" layout="inline">
+          <CalciteLabel 
+            scale="s" 
+            layout="inline"
+            onClick={(e) => e.stopPropagation()}
+          >
             <CalciteCheckbox 
               checked={includeOriginMarker} 
               onCalciteCheckboxChange={() => setIncludeOriginMarker(!includeOriginMarker)} 
+              onClick={(e) => e.stopPropagation()}
             />
             Include origin marker
           </CalciteLabel>
@@ -255,7 +268,10 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
         iconStart={exportFormat === 'stl' ? 'print' : 'download'}
         disabled={!canDownload || isExporting}
         loading={isExporting}
-        onClick={handleExport}
+        onClick={(e) => {
+          e.stopPropagation();
+          handleExport();
+        }}
       >
         {exportButtonText}
       </CalciteButton>
