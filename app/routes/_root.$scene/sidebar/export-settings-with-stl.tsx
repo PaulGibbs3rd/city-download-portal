@@ -199,6 +199,7 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
               <CalciteSegmentedControlItem 
                 value="glb" 
                 checked={exportFormat === 'glb'}
+                onClick={(e) => e.stopPropagation()}
               >
                 <CalciteIcon icon="shapes" scale="s" slot="icon-start" />
                 GLB
@@ -206,6 +207,7 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
               <CalciteSegmentedControlItem 
                 value="stl" 
                 checked={exportFormat === 'stl'}
+                onClick={(e) => e.stopPropagation()}
               >
                 <CalciteIcon icon="print" scale="s" slot="icon-start" />
                 STL
