@@ -17,6 +17,7 @@ import '@esri/calcite-components/dist/components/calcite-button';
 import '@esri/calcite-components/dist/components/calcite-checkbox';
 import '@esri/calcite-components/dist/components/calcite-icon';
 import '@esri/calcite-components/dist/components/calcite-input-text';
+import '@esri/calcite-components/dist/components/calcite-input-number';
 import '@esri/calcite-components/dist/components/calcite-label';
 import '@esri/calcite-components/dist/components/calcite-select';
 import '@esri/calcite-components/dist/components/calcite-option';
@@ -28,6 +29,7 @@ import {
   CalciteCheckbox,
   CalciteIcon,
   CalciteInputText,
+  CalciteInputNumber,
   CalciteLabel,
   CalciteSegmentedControl,
   CalciteSegmentedControlItem,
@@ -62,6 +64,8 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
   const [filename, setFilename] = useState("")
   const [exportFormat, setExportFormat] = useState<ExportFormat>('glb');
   const [includeOriginMarker, setIncludeOriginMarker] = useState(true);
+  const [extrudeBase, setExtrudeBase] = useState(true);
+  const [extrusionDepth, setExtrusionDepth] = useState("50");
   const [isConvertingToSTL, setIsConvertingToSTL] = useState(false);
 
   const blockElementId = useReferenceElementId('downloading', 'left');
@@ -86,7 +90,9 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
 
   const sizeQuery = useExportSizeQuery({ 
     enabled: canDownload,
-    includeOriginMarker
+    includeOriginMarker,
+    extrudeBase,
+    extrusionDepth: extrusionDepth === '' ? 50 : (parseFloat(extrusionDepth) || 50)
   });
   
   const fileSize = sizeQuery.data;
@@ -123,6 +129,8 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
       features: featureQuery.data!,
       origin: modelOrigin!,
       includeOriginMarker,
+      extrudeBase,
+      extrusionDepth: extrusionDepth === '' ? 50 : (parseFloat(extrusionDepth) || 50),
       filename,
     };
 
@@ -251,6 +259,38 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
             Include origin marker
           </CalciteLabel>
         </li>
+        <li>
+          <CalciteLabel 
+            scale="s" 
+            layout="inline"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <CalciteCheckbox 
+              checked={extrudeBase} 
+              onCalciteCheckboxChange={() => setExtrudeBase(!extrudeBase)} 
+              onClick={(e) => e.stopPropagation()}
+            />
+            Extrude terrain base downward
+          </CalciteLabel>
+        </li>
+        {extrudeBase && (
+          <li>
+            <CalciteLabel scale="s">
+              <p className="font-medium">Extrusion depth (meters)</p>
+              <CalciteInputNumber
+                scale="s"
+                value={extrusionDepth}
+                onCalciteInputNumberChange={(e) => {
+                  const value = e.target.value;
+                  setExtrusionDepth(value);
+                }}
+                min={0}
+                step={10}
+                onClick={(e) => e.stopPropagation()}
+              />
+            </CalciteLabel>
+          </li>
+        )}
         <li>
           <CalciteLabel scale="s">
             <p className="font-medium">File size</p>

@@ -28,10 +28,14 @@ import type Graphic from "@arcgis/core/Graphic";
 
 export function useExportSizeQuery({ 
   enabled = false, 
-  includeOriginMarker = true
+  includeOriginMarker = true,
+  extrudeBase = true,
+  extrusionDepth = 50
 }: { 
   enabled?: boolean, 
-  includeOriginMarker?: boolean
+  includeOriginMarker?: boolean,
+  extrudeBase?: boolean,
+  extrusionDepth?: number
 }) {
   const scene = useScene()
   const store = useSelectionState();
@@ -65,7 +69,9 @@ export function useExportSizeQuery({
     features.map(f => f.getObjectId()),
     selection?.extent?.toJSON(),
     modelOrigin?.toJSON(),
-    includeOriginMarker
+    includeOriginMarker,
+    extrudeBase,
+    extrusionDepth
   ]);
 
   const query = useQuery({
@@ -83,6 +89,8 @@ export function useExportSizeQuery({
           signal,
           origin: modelOrigin!,
           includeOriginMarker,
+          extrudeBase,
+          extrusionDepth,
           filename: "unknown",
         })
 
@@ -126,6 +134,8 @@ export function useDownloadExportMutation() {
 
 async function createModelBlob(args: {
   includeOriginMarker?: boolean,
+  extrudeBase?: boolean,
+  extrusionDepth?: number,
   filename: string,
   scene: WebScene,
   extent: Extent,
@@ -135,12 +145,16 @@ async function createModelBlob(args: {
 }) {
   const {
     includeOriginMarker = false,
+    extrudeBase = true,
     scene,
     extent,
     features,
     origin,
     signal
   } = args;
+  
+  // Convert extrusionDepth string to number, with fallback to 50
+  const extrusionDepth = args.extrusionDepth ? Number(args.extrusionDepth) : 50;
 
   const featureCount = Array.from(features.values()).flat().length;
   if (featureCount > MAX_FEATURES) {
@@ -160,6 +174,8 @@ async function createModelBlob(args: {
       features,
       origin,
       includeOriginMarker,
+      extrudeBase,
+      extrusionDepth,
       signal,
     });
   } catch (error) {
