@@ -158,14 +158,15 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
         loading={mutation.isPending}
         onClick={() => {
           if (canDownload) {
-            mutation.mutateAsync({
+            const exportParams = {
               scene,
               extent: selection!.extent!,
               features: featureQuery.data!,
               origin: modelOrigin!,
               includeOriginMarker,
               filename,
-            })
+            };
+            mutation.mutateAsync(exportParams)
               .then(blob => {
                 const name = filename || title || 'model';
                 downloadFile(name, blob);

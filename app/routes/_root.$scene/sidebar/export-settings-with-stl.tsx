@@ -86,7 +86,7 @@ export default function ExportSettings({ dispatch, state }: ExportSettingsProps)
 
   const sizeQuery = useExportSizeQuery({ 
     enabled: canDownload,
-    includeOriginMarker 
+    includeOriginMarker
   });
   
   const fileSize = sizeQuery.data;

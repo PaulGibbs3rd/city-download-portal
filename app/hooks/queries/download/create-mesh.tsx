@@ -24,10 +24,21 @@ import { createOriginMarker, ExportColors } from "~/symbology/symbology";
 import MeshMaterial from "@arcgis/core/geometry/support/MeshMaterial.js";
 import type { MeshGraphic } from "./export-query";
 
-async function extractElevation(ground: Ground, extent: __esri.Extent, features?: Map<__esri.SceneLayer, MeshGraphic[]>) {
+async function extractElevation(ground: Ground, extent: __esri.Extent, features?: Map<__esri.SceneLayer, MeshGraphic[]>, extrudeBase: boolean = true, extrusionDepth: number = 50) {
   const mesh = await meshUtils.createFromElevation(ground, extent, {
     demResolution: "finest-contiguous"
   });
+
+  if (!extrudeBase) {
+    // Return the original terrain mesh without extrusion
+    for (const component of mesh.components ?? []) {
+      component.name = "<terrain>";
+      component.material = new MeshMaterial({
+        color: ExportColors.terrain()
+      });
+    }
+    return mesh;
+  }
 
   // Calculate base elevation from features if available
   let minElevation = mesh.extent.zmin ?? 0;
@@ -36,14 +47,13 @@ async function extractElevation(ground: Ground, extent: __esri.Extent, features?
     if (allFeatures.length > 0) {
       minElevation = Math.min(
         minElevation,
-        ...allFeatures.map(f => f.geometry.extent.zmin)
+        ...allFeatures.map(f => f.geometry.extent.zmin).filter((z): z is number => z !== undefined)
       );
     }
   }
 
-  // Extrude the terrain mesh downward to create a solid
-  const thickness = 50; // meters - adjust as needed
-  const baseElevation = minElevation - thickness;
+  // Use the specified extrusion depth
+  const baseElevation = minElevation - extrusionDepth;
   
   const extrudedMesh = await extrudeTerrainMesh(mesh, baseElevation);
 
@@ -169,6 +179,8 @@ function addEdge(edgeMap: Map<string, number>, v1: number, v2: number): void {
   edgeMap.set(edgeKey, (edgeMap.get(edgeKey) || 0) + 1);
 }
 
+
+
 async function createLayerMeshes({
   layer,
   features,
@@ -187,12 +199,15 @@ async function createLayerMeshes({
       await mesh.load();
 
       const objectId = feature.getObjectId();
-      for (const component of mesh.components) {
-        component.name = `${layer.title}-${objectId}`;
-        // if the feature already has a material, we use that instead
-        component.material ??= new MeshMaterial({
-          color: ExportColors.feature()
-        });
+
+      if (mesh.components) {
+        for (const component of mesh.components) {
+          component.name = `${layer.title}-${objectId}`;
+          // if the feature already has a material, we use that instead
+          component.material ??= new MeshMaterial({
+            color: ExportColors.feature()
+          });
+        }
       }
       return meshUtils.convertVertexSpace(mesh, vertexSpace, { signal });
     })
@@ -245,8 +260,20 @@ async function mergeSliceMeshes(
 
   if (includeOriginMarker) {
     const features = Array.from(featureMap.values()).flat();
-    const zmax = features.reduce((max, { geometry: next }) => next.extent.zmax > max ? next.extent.zmax : max, elevation.extent.zmax ?? -Infinity);
-    const zmin = features.reduce((min, { geometry: next }) => min > next.extent.zmin ? next.extent.zmin : min, elevation.extent.zmin ?? Infinity);
+    const zmax = features.reduce(
+      (max, { geometry: next }) => {
+        const z = next.extent.zmax ?? -Infinity;
+        return z > max ? z : max;
+      },
+      elevation.extent.zmax ?? -Infinity
+    );
+    const zmin = features.reduce(
+      (min, { geometry: next }) => {
+        const nextZmin = next.extent.zmin ?? Infinity;
+        return min > nextZmin ? nextZmin : min;
+      },
+      elevation.extent.zmin ?? Infinity
+    );
     const height = zmax - zmin;
 
     const originMesh = await createOriginMarker(origin, height);
@@ -266,6 +293,8 @@ export async function createMesh({
   features,
   origin,
   includeOriginMarker = true,
+  extrudeBase = true,
+  extrusionDepth = 50,
   signal,
 }: {
   scene: WebScene,
@@ -273,7 +302,9 @@ export async function createMesh({
   features: Map<__esri.SceneLayer, MeshGraphic[]>
   signal?: AbortSignal,
   origin: Point,
-  includeOriginMarker?: boolean
+  includeOriginMarker?: boolean,
+  extrudeBase?: boolean,
+  extrusionDepth?: number
 }) {
   const ground = scene.ground;
   const originSpatialReference = origin.spatialReference;
@@ -291,7 +322,7 @@ export async function createMesh({
     projectedOrigin = projection.project(origin, sr) as Point;
   }
 
-  const elevation = await extractElevation(ground, projectedExtent, features);
+  const elevation = await extractElevation(ground, projectedExtent, features, extrudeBase, extrusionDepth);
 
   const slice = await mergeSliceMeshes({
     elevation,
