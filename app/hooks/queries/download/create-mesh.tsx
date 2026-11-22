@@ -31,6 +31,7 @@ import { clipMeshToFootprint, extrudeMeshSurface, getFootprintPerimeter } from "
 import { createRectangleFootprint, meshInFootprintSpace, projectPoint, signedDistance, vertexSpaceAt, type ExportFootprint, type HexagonFootprint } from "./hexagon-footprint";
 import { createOsmBuildingMeshes } from "./osm-building-mesh";
 import type { OsmBuilding } from "./osm-building-query";
+import type { PrintDimensions } from "~/utils/print-dimensions";
 
 async function extractElevation(ground: Ground, extent: Extent, features?: Map<SceneLayer, MeshGraphic[]>, extrudeBase: boolean = true, extrusionDepth: number = 50) {
   const mesh = await meshUtils.createFromElevation(ground, extent, {
@@ -301,6 +302,7 @@ export async function createMesh({
   includeOriginMarker = true,
   extrudeBase = true,
   extrusionDepth = 50,
+  printDimensions,
   hexagon,
   osmBuildings,
   signal,
@@ -313,12 +315,13 @@ export async function createMesh({
   includeOriginMarker?: boolean,
   extrudeBase?: boolean,
   extrusionDepth?: number
+  printDimensions?: PrintDimensions;
   hexagon?: HexagonFootprint,
   osmBuildings?: OsmBuilding[],
 }) {
   if (hexagon || osmBuildings) {
     const footprint = hexagon ?? await createRectangleFootprint(extent, signal);
-    return createMaskedMesh({ scene, features, origin, includeOriginMarker, extrudeBase, extrusionDepth, footprint, osmBuildings, signal });
+    return createMaskedMesh({ scene, features, origin, includeOriginMarker, extrudeBase, extrusionDepth, footprint, osmBuildings, printDimensions, signal });
   }
 
   const ground = scene.ground;
@@ -352,7 +355,7 @@ export async function createMesh({
 }
 
 async function createMaskedMesh({
-  scene, features, origin, includeOriginMarker, extrudeBase, extrusionDepth, footprint, osmBuildings, signal,
+  scene, features, origin, includeOriginMarker, extrudeBase, extrusionDepth, footprint, osmBuildings, printDimensions, signal,
 }: {
   scene: WebScene;
   features: Map<SceneLayer, MeshGraphic[]>;
@@ -362,6 +365,7 @@ async function createMaskedMesh({
   extrusionDepth: number;
   footprint: ExportFootprint;
   osmBuildings?: OsmBuilding[];
+  printDimensions?: PrintDimensions;
   signal?: AbortSignal;
 }) {
   const sampled = await meshUtils.createFromElevation(scene.ground, footprint.sourceExtent, {
@@ -399,15 +403,23 @@ async function createMaskedMesh({
     }
   }
 
-  if (extrudeBase) {
+  if (printDimensions) {
+    const xs = footprint.corners.map(([x]) => x);
+    const ys = footprint.corners.map(([, y]) => y);
+    const longestSide = Math.max(Math.max(...xs) - Math.min(...xs), Math.max(...ys) - Math.min(...ys));
+    const depth = longestSide * (printDimensions.baseThicknessMm / printDimensions.longestSideMm);
+    if (!Number.isFinite(depth) || depth <= 0) throw new Error("Enter a positive print size and base thickness.");
+    terrain = extrudeMeshSurface(terrain, perimeter, minElevation - depth, "terrain-base");
+  } else if (extrudeBase) {
     const sr = terrain.spatialReference;
     const metersPerUnit = terrain.vertexSpace.type === "local" ? 1 : sr.metersPerUnit;
     terrain = extrudeMeshSurface(terrain, perimeter, minElevation - extrusionDepth / metersPerUnit, "terrain-base");
   }
 
   const meshes = [terrain, ...city];
-  const exportOrigin = await projectPoint(origin, footprint.center.spatialReference);
-  if (includeOriginMarker && maxElevation > minElevation) {
+  // Keep the footprint's local axes for print exports so the terrain bottom stays level.
+  const exportOrigin = printDimensions ? footprint.center : await projectPoint(origin, footprint.center.spatialReference);
+  if (!printDimensions && includeOriginMarker && maxElevation > minElevation) {
     const marker = await createOriginMarker(exportOrigin, maxElevation - minElevation);
     const local = await meshInFootprintSpace(marker, footprint, signal);
     const position = local.vertexAttributes.position;

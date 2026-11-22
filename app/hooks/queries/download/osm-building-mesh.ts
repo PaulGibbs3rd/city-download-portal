@@ -5,10 +5,13 @@ import { createElevationSampler, createFromPolygon } from "@arcgis/core/geometry
 import MeshMaterial from "@arcgis/core/geometry/support/MeshMaterial.js";
 import MeshVertexAttributes from "@arcgis/core/geometry/support/MeshVertexAttributes.js";
 import { intersectionExecute } from "@arcgis/core/geometry/operators/intersectionOperator.js";
+import { differenceExecute } from "@arcgis/core/geometry/operators/differenceOperator.js";
+import { unionExecuteMany } from "@arcgis/core/geometry/operators/unionOperator.js";
 import { ExportColors } from "~/symbology/symbology";
 import { meshInFootprintSpace, type ExportFootprint } from "./hexagon-footprint";
 import { extrudeMeshSurface, getMeshPerimeter } from "./clip-footprint-mesh";
 import type { OsmBuilding } from "./osm-building-query";
+import { createDetailedOsmRoof } from "./osm-roof-mesh";
 
 export async function createOsmBuildingMeshes(
   buildings: OsmBuilding[],
@@ -32,6 +35,7 @@ export async function createOsmBuildingMeshes(
   const meshes: Mesh[] = [];
   const material = new MeshMaterial({ color: ExportColors.feature() });
 
+  const footprints: { building: OsmBuilding; polygon: Polygon; clipped: Polygon }[] = [];
   for (const building of buildings) {
     signal?.throwIfAborted();
     const rings = building.footprint.rings;
@@ -52,11 +56,23 @@ export async function createOsmBuildingMeshes(
       })),
     });
 
-    // Cut the footprint before extruding so buildings along the mask have closed cut faces.
+    // Keep the full footprint for roof placement and cut its triangles to the export boundary.
     const clipped = intersectionExecute(polygon, mask);
-    if (clipped?.type !== "polygon") continue;
+    if (clipped?.type === "polygon") footprints.push({ building, polygon, clipped: clipped as Polygon });
+  }
 
-    const roof = await createFromPolygon(clipped as Polygon);
+  const groundParts = footprints.filter(({ building }) => building.part && !building.minHeight).map(({ clipped }) => clipped);
+  const groundCoverage = groundParts.length ? unionExecuteMany(groundParts) : null;
+  const outlines = footprints.filter(({ building }) => !building.part).map(({ polygon }) => {
+    const extent = polygon.extent!;
+    return { polygon, area: extent.width * extent.height };
+  }).sort((a, b) => a.area - b.area);
+  for (const { building, polygon, clipped } of footprints) {
+    signal?.throwIfAborted();
+    // Preserve the uncovered outline and let ground-level parts define their own building volumes.
+    const floor = !building.part && groundCoverage ? differenceExecute(clipped, groundCoverage) : clipped;
+    if (floor?.type !== "polygon") continue;
+    const roof = await createFromPolygon(floor as Polygon);
     const positions = roof?.vertexAttributes.position;
     if (!positions?.length || !roof.components?.length) continue;
 
@@ -71,8 +87,15 @@ export async function createOsmBuildingMeshes(
     }
     if (!Number.isFinite(lowest)) continue;
 
+    // Parts of one building share a datum. Sampling each footprint independently on a
+    // slope can separate a raised piece from an adjoining part with the same tagged height.
+    const center = building.part ? polygon.centroid : null;
+    const parent = center ? outlines.find(outline => outline.polygon.contains(center)) : undefined;
+    const parentCenter = parent?.polygon.centroid;
+    const sharedGrade = parentCenter ? elevation.elevationAt(parentCenter.x, parentCenter.y) : undefined;
+    const grade = sharedGrade != null && Number.isFinite(sharedGrade) ? sharedGrade : highest;
     const top = positions.slice();
-    for (let index = 2; index < top.length; index += 3) top[index] = highest + building.height;
+    for (let index = 2; index < top.length; index += 3) top[index] = grade + building.height;
     const name = `OpenStreetMap building ${building.id}`;
     const components = roof.components.map(component => {
       const faces = component.faces ?? [];
@@ -88,16 +111,18 @@ export async function createOsmBuildingMeshes(
     }).filter(component => component.faces.length);
     if (!components.length) continue;
 
-    const surface = new Mesh({
+    const flat = new Mesh({
       spatialReference: sampledTerrain.spatialReference,
       vertexSpace: sampledTerrain.vertexSpace,
       vertexAttributes: new MeshVertexAttributes({ position: top }),
       components,
     });
+    const surface = createDetailedOsmRoof(flat, polygon.rings, building, grade, footprint, signal) ?? flat;
     const perimeter = getMeshPerimeter(surface, () => new Error(`Could not close the footprint for ${name}.`));
     if (!perimeter.length) continue;
-    // Extend the walls slightly into the terrain to keep the print in contact across slopes.
-    meshes.push(extrudeMeshSurface(surface, perimeter, lowest - 0.25, `${name} walls`));
+    // Ground floors extend into terrain. Raised parts retain their mapped clearance.
+    const bottom = building.minHeight ? grade + building.minHeight : Math.min(grade, lowest) - 0.25;
+    meshes.push(extrudeMeshSurface(surface, perimeter, bottom, `${name} walls`));
   }
 
   return meshes;

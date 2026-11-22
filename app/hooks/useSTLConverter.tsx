@@ -9,6 +9,7 @@ export interface STLConversionOptions {
   /** Whether to merge all geometries into a single mesh */
   mergeGeometries?: boolean;
   binaryHeader?: string;
+  printLongestSideMm?: number;
 }
 
 export function useSTLConverter() {
@@ -26,7 +27,8 @@ export function useSTLConverter() {
       const stlData = await converter.convertGLBToSTL(file, {
         binary: options.binary ?? true,
         scale: options.scale ?? 1,
-        mergeGeometries: options.mergeGeometries ?? true
+        mergeGeometries: options.mergeGeometries ?? true,
+        printLongestSideMm: options.printLongestSideMm,
       });
       if (options.binaryHeader && stlData instanceof DataView) {
         const header = new Uint8Array(stlData.buffer, stlData.byteOffset, 80);

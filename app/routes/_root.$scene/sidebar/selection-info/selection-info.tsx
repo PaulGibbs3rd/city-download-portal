@@ -160,11 +160,11 @@ export default function SelectionInfo({ state, dispatch, hexagon }: Measurements
             </li>}
           </ul>
           <UpdateSelectionTool invalid={hasTooManyFeatures} />
-          <CalciteNotice kind="warning" open={hasTooManyFeatures}>
+          {hasTooManyFeatures && <CalciteNotice kind="warning" open>
             <p className="p-2 text-xs" slot="message">
               The selection has too many features. Please reduce the size of the selected area or adjust its location.
             </p>
-          </CalciteNotice>
+          </CalciteNotice>}
         </div>
       </CalciteBlock>
       <Dimensions />

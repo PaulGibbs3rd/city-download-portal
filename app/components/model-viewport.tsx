@@ -12,11 +12,16 @@ import { RoomEnvironment } from "three/examples/jsm/environments/RoomEnvironment
 import { GLTFLoader } from "three/examples/jsm/loaders/GLTFLoader.js";
 import { STLLoader } from "three/examples/jsm/loaders/STLLoader.js";
 import type { Object3D, WebGLRenderTarget } from "three";
+import { hasPrintStlHeader } from "~/utils/print-dimensions";
 
-async function readModel(file: File): Promise<Object3D> {
+async function readModel(file: File): Promise<{ model: Object3D; isPrintStl: boolean }> {
   if (/\.stl$/i.test(file.name)) {
-    const geometry = new STLLoader().parse(await file.arrayBuffer());
-    return new Mesh(geometry, new MeshStandardMaterial({ color: 0xe4ecf5, roughness: 0.75 }));
+    const data = await file.arrayBuffer();
+    const geometry = new STLLoader().parse(data);
+    return {
+      model: new Mesh(geometry, new MeshStandardMaterial({ color: 0xe4ecf5, roughness: 0.75 })),
+      isPrintStl: hasPrintStlHeader(data),
+    };
   }
   if (!/\.glb$/i.test(file.name)) throw new Error("Choose a GLB or STL file.");
 
@@ -29,7 +34,7 @@ async function readModel(file: File): Promise<Object3D> {
     throw new Error("The GLB must contain its own textures and buffers.");
   });
   const gltf = await new GLTFLoader(manager).parseAsync(data, "");
-  return gltf.scene;
+  return { model: gltf.scene, isPrintStl: false };
 }
 
 function disposeModel(model: Object3D) {
@@ -60,9 +65,11 @@ export default function ModelViewport({ file }: { file: File }) {
   const reset = useRef<(() => void) | undefined>(undefined);
   const helpId = useId();
   const [status, setStatus] = useState<ViewState>("loading");
-  const [zUp, setZUp] = useState(false);
+  const [orientation, setOrientation] = useState<{ file: File; zUp: boolean }>();
+  const [details, setDetails] = useState<{ file: File; zUp: boolean; printSize?: string }>();
   const isStl = /\.stl$/i.test(file.name);
-  const rotateStl = isStl && zUp;
+  const orientationOverride = orientation?.file === file ? orientation.zUp : undefined;
+  const currentDetails = details?.file === file && status === "ready" ? details : undefined;
 
   useEffect(() => {
     const container = host.current;
@@ -118,15 +125,19 @@ export default function ModelViewport({ file }: { file: File }) {
     let disposed = false;
     let loadedModel: Object3D | undefined;
     let environmentMap: WebGLRenderTarget | undefined;
-    void readModel(file).then((model) => {
+    void readModel(file).then(({ model, isPrintStl }) => {
       if (disposed) {
         disposeModel(model);
         return;
       }
       loadedModel = model;
+      const zUp = isStl && (orientationOverride ?? isPrintStl);
+      const printSize = isPrintStl
+        ? new Box3().setFromObject(model).getSize(new Vector3()).toArray().map(value => value.toFixed(1)).join(" × ")
+        : undefined;
       const centered = new Group();
       centered.add(model);
-      if (rotateStl) centered.rotation.x = -Math.PI / 2;
+      if (zUp) centered.rotation.x = -Math.PI / 2;
       const box = new Box3().setFromObject(centered);
       const diagonal = box.getSize(new Vector3()).length();
       if (!diagonal || !Number.isFinite(diagonal)) throw new Error("The file has no usable geometry.");
@@ -158,6 +169,7 @@ export default function ModelViewport({ file }: { file: File }) {
         render();
       };
       reset.current();
+      setDetails({ file, zUp, printSize });
       setStatus("ready");
     }).catch(() => {
       if (!disposed) setStatus("invalid");
@@ -174,16 +186,19 @@ export default function ModelViewport({ file }: { file: File }) {
       grid.dispose();
       renderer.dispose();
     };
-  }, [file, isStl, rotateStl]);
+  }, [file, isStl, orientationOverride]);
 
   return (
     <div className="space-y-2">
       <div className="flex flex-wrap items-center justify-between gap-2">
-        <p className="min-w-0 break-all font-medium">{file.name}</p>
+        <div className="min-w-0">
+          <p className="break-all font-medium">{file.name}</p>
+          {currentDetails?.printSize && <p className="text-xs">Print size {currentDetails.printSize} mm (X × Y × Z)</p>}
+        </div>
         <div className="flex flex-wrap gap-2">
-          {isStl && status === "ready" && (
-            <CalciteButton appearance="outline" scale="s" onClick={() => setZUp(!zUp)}>
-              {zUp ? "Use Y-up" : "Use Z-up"}
+          {isStl && currentDetails && (
+            <CalciteButton appearance="outline" scale="s" onClick={() => setOrientation({ file, zUp: !currentDetails.zUp })}>
+              {currentDetails.zUp ? "Use Y-up" : "Use Z-up"}
             </CalciteButton>
           )}
           <CalciteButton appearance="outline" scale="s" disabled={status !== "ready"} onClick={() => reset.current?.()}>

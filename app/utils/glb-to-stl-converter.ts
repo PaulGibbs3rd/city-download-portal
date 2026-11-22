@@ -17,6 +17,24 @@ export interface ConversionOptions {
   scale?: number;
   /** Whether to merge all geometries into a single mesh */
   mergeGeometries?: boolean;
+  /** Size to the longest horizontal dimension and put the model on the XY print bed. */
+  printLongestSideMm?: number;
+}
+
+function preparePrint(scene: THREE.Group, longestSideMm: number) {
+  const print = new THREE.Group();
+  print.add(scene.clone());
+  // glTF has Y up. STL coordinates use Z for printing height.
+  print.rotation.x = Math.PI / 2;
+  const bounds = new THREE.Box3().setFromObject(print, true);
+  const size = bounds.getSize(new THREE.Vector3());
+  const scale = longestSideMm / Math.max(size.x, size.y);
+  if (!Number.isFinite(scale) || scale <= 0) throw new Error("The model has no printable footprint.");
+  const center = bounds.getCenter(new THREE.Vector3());
+  print.scale.setScalar(scale);
+  print.position.set(-center.x * scale, -center.y * scale, -bounds.min.z * scale);
+  print.updateMatrixWorld(true);
+  return print;
 }
 
 export class GLBToSTLConverter {
@@ -92,12 +110,17 @@ export class GLBToSTLConverter {
    * Convert a Three.js scene/group to STL format
    */
   convertToSTL(scene: THREE.Group, options: ConversionOptions = {}): string | DataView {
-    const { binary = true, scale = 1, mergeGeometries = true } = options;
+    const { binary = true, scale = 1, mergeGeometries = true, printLongestSideMm } = options;
+
+    if (printLongestSideMm != null) {
+      return this.exporter.parse(preparePrint(scene, printLongestSideMm), { binary });
+    }
 
     // Apply scaling if needed
     if (scale !== 1) {
       scene.scale.multiplyScalar(scale);
     }
+    scene.updateMatrixWorld(true);
 
     if (mergeGeometries) {
       // Collect all mesh geometries

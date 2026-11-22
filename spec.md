@@ -71,4 +71,12 @@ Validated a Seattle selection in the browser. The rectangular GLB contained 44 O
 
 ## 3D model viewer
 
-After a GLB or STL download, the portal opens the 3D model viewer with the exact file bytes. **View last export** reopens that file while the scene is open. **Open GLB or STL** loads a local file into the browser without uploading it. The viewer fits the model and provides orbit, pan, zoom, and reset controls. STL files open with the portal's Y-up orientation and can be switched to Z-up.
+After a GLB or STL download, the portal opens the 3D model viewer with the exact file bytes. **View last export** reopens that file while the scene is open. **Open GLB or STL** loads a local file into the browser without uploading it. The viewer fits the model and provides orbit, pan, zoom, and reset controls.
+
+## Day 21 OpenStreetMap print settings
+
+OpenStreetMap 3D defaults to STL with a 100 mm longest side and a 3 mm minimum base thickness. The terrain is extruded in the local frame and scaled uniformly with the buildings. The STL uses a Z-up print orientation, centered horizontally, with a flat bottom at Z=0. Its header includes the OpenStreetMap attribution and identifies the print orientation so the viewer can display the model upright with its dimensions, including after reopening the file from disk.
+
+Turn off **Include OpenStreetMap buildings** to export terrain alone without a building query. OpenStreetMap exports fetch matching buildings in pages where needed. The source area for a building query is limited to 1.5 km across. GLB keeps map-scale units and the existing model-origin and extrusion controls.
+
+**Use mapped roofs and building parts** supports gabled, hipped, pyramidal, and skillion roofs. Roof height, levels, angle, and direction guide the geometry where tagged. OpenStreetMap parts can define separate heights and clearances. Untagged or unsupported roofs retain a flat cap. The North American feature layer supplies roof tags, and the bounded Overpass request supplements it with building parts.

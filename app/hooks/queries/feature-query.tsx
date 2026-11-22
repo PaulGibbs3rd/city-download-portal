@@ -26,6 +26,14 @@ import { useDebouncedValue } from "../useDebouncedValue";
 import { filterMeshGraphicsFromFeatureSet, type MeshGraphic } from "./download/export-query";
 import { bufferExecute } from "@arcgis/core/geometry/operators/bufferOperator.js";
 import { unionExecuteMany } from "@arcgis/core/geometry/operators/unionOperator.js";
+import { useScene } from "~/arcgis/components/maps/web-scene/scene-context";
+import { OSM_SCENE_ID } from "~/data/osm-scene";
+
+function useExportSceneLayerViews() {
+  const scene = useScene();
+  const layerViews = useSceneLayerViews();
+  return scene.portalItem?.id === OSM_SCENE_ID ? undefined : layerViews;
+}
 
 /**
  * This function performs a client side query on the layer views, to find features that intersect with the given boundary.
@@ -134,7 +142,7 @@ export function useSelectedFeaturesFromLayerViews(key?: string) {
   const store = useSelectionState();
   const selection = useAccessorValue(() => store.selection);
   const deferredPolygon = useDeferredValue(selection)
-  const sceneLayerViews = useSceneLayerViews();
+  const sceneLayerViews = useExportSceneLayerViews();
 
   const query = useQuery({
     queryKey: ['selected-features', 'layerviews', sceneLayerViews?.map(lv => lv.layer.id), deferredPolygon?.rings, key],
@@ -148,7 +156,7 @@ export function useSelectedFeaturesFromLayerViews(key?: string) {
 export function useSelectedFeaturesCount() {
   const store = useSelectionState();
   const selection = useAccessorValue(() => store.selection);
-  const sceneLayerViews = useSceneLayerViews();
+  const sceneLayerViews = useExportSceneLayerViews();
 
   const queryKey = useDeferredValue(
     ['selected-features', 'layerviews', sceneLayerViews?.map(lv => lv.layer.id), selection?.rings]
@@ -179,7 +187,7 @@ export function useHasTooManyFeatures() {
 }
 
 export function useSelectedFeaturesFromLayers(enabled = false, sourceExtent?: Extent | null) {
-  const sceneLayerViews = useSceneLayerViews();
+  const sceneLayerViews = useExportSceneLayerViews();
   const store = useSelectionState();
   const selection = useAccessorValue(() => store.selection);
   const extent = sourceExtent === undefined ? selection?.extent : sourceExtent;
@@ -194,7 +202,7 @@ export function useSelectedFeaturesFromLayers(enabled = false, sourceExtent?: Ex
 }
 
 export function useSelectionFootprints(selection: Polygon | null) {
-  const sceneLayerViews = useSceneLayerViews();
+  const sceneLayerViews = useExportSceneLayerViews();
   const hasTooManyFeatures = useHasTooManyFeatures();
 
   const deferredPolygon = useDebouncedValue(selection)

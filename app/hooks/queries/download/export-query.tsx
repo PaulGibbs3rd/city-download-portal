@@ -27,6 +27,7 @@ import type FeatureSet from "@arcgis/core/rest/support/FeatureSet.js";
 import type { HexagonFootprint } from "./hexagon-footprint";
 import type { OsmBuilding } from "./osm-building-query";
 import { OSM_ATTRIBUTION } from "~/data/osm-scene";
+import type { PrintDimensions } from "~/utils/print-dimensions";
 
 export function useExportSizeQuery(args?: ExportModelOptions) {
   const isDownloading = useIsMutating({ mutationKey: ['export-download'] }) > 0;
@@ -34,9 +35,10 @@ export function useExportSizeQuery(args?: ExportModelOptions) {
     queryKey: [
       'export', 'size', args?.scene.portalItem?.id, args?.scene.portalItem?.portal?.url,
       args?.extent.toJSON(), args?.origin.toJSON(), args?.hexagon?.outline.toJSON(),
-      args?.includeOriginMarker, args?.extrudeBase, args?.extrusionDepth,
+      args?.includeOriginMarker, args?.extrudeBase, args?.extrusionDepth, args?.printDimensions,
       args && Array.from(args.features, ([layer, features]) => [layer.url, layer.id, features.map(f => f.getObjectId())]),
-      args?.osmBuildings?.map(building => [building.id, building.height, building.footprint.rings]),
+      args?.osmBuildings?.map(({ id, height, minHeight, part, roof, footprint }) =>
+        [id, height, minHeight, part, roof, footprint.rings]),
     ],
     queryFn: async ({ signal }) => {
       try {
@@ -83,6 +85,7 @@ export interface ExportModelOptions {
   includeOriginMarker?: boolean,
   extrudeBase?: boolean,
   extrusionDepth?: number,
+  printDimensions?: PrintDimensions,
   scene: WebScene,
   extent: Extent,
   features: Map<SceneLayer, MeshGraphic[]>
@@ -102,14 +105,14 @@ async function createModelBlob(args: ExportModelOptions) {
     origin,
     hexagon,
     osmBuildings,
+    printDimensions,
     signal
   } = args;
   
   // Convert extrusionDepth string to number, with fallback to 50
   const extrusionDepth = args.extrusionDepth ? Number(args.extrusionDepth) : 50;
 
-  const featureCount = osmBuildings?.length ?? Array.from(features.values()).flat().length;
-  if (featureCount > MAX_FEATURES) {
+  if (!osmBuildings && Array.from(features.values()).reduce((count, layer) => count + layer.length, 0) > MAX_FEATURES) {
     throw new ToastableError({
       key: 'too-many-features',
       message: 'Too many features have been selected',
@@ -128,6 +131,7 @@ async function createModelBlob(args: ExportModelOptions) {
       includeOriginMarker,
       extrudeBase,
       extrusionDepth,
+      printDimensions,
       hexagon,
       osmBuildings,
       signal,

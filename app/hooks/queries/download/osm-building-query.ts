@@ -8,7 +8,28 @@ export interface OsmBuilding {
   id: string;
   footprint: Polygon;
   height: number;
+  part?: boolean;
+  minHeight?: number;
+  roof?: OsmRoof;
 }
+
+export interface OsmRoof {
+  shape: "gabled" | "hipped" | "pyramidal" | "skillion";
+  height: number;
+  angle: number;
+  direction?: number;
+  across: boolean;
+  includedInHeight: boolean;
+}
+
+type OsmTags = Record<string, string | number | null | undefined>;
+
+const replicaTags = {
+  height: "height", "building:levels": "building_levels", min_height: "min_height",
+  "building:min_level": "building_min_level", "roof:shape": "roof_shape", "roof:height": "roof_height",
+  "roof:levels": "roof_levels", "roof:angle": "roof_angle", "roof:direction": "roof_direction",
+  "roof:orientation": "roof_orientation",
+};
 
 const northAmericaBuildings = "https://services6.arcgis.com/Do88DoK2xjTUCXd1/ArcGIS/rest/services/OSM_NA_Buildings/FeatureServer/0";
 const globalOverpass = "https://overpass.private.coffee/api/interpreter";
@@ -37,13 +58,62 @@ export function osmBuildingHeight(height?: string | number, levels?: string | nu
   return meters(height) || (Number.isFinite(levelCount) && levelCount > 0 ? levelCount * 3 : 8);
 }
 
+function positive(value: OsmTags[string]) {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function roofDirection(value: OsmTags[string]) {
+  if (value == null || String(value).trim() === "") return undefined;
+  const directions = ["N", "NNE", "NE", "ENE", "E", "ESE", "SE", "SSE", "S", "SSW", "SW", "WSW", "W", "WNW", "NW", "NNW"];
+  const cardinal = directions.indexOf(String(value).trim().toUpperCase());
+  if (cardinal >= 0) return cardinal * 22.5;
+  const bearing = Number(value);
+  return Number.isFinite(bearing) && bearing >= 0 && bearing <= 360 ? bearing : undefined;
+}
+
+export function readOsmBuildingTags(tags: OsmTags, detail = true): Omit<OsmBuilding, "id" | "footprint"> {
+  const taggedHeight = meters(tags.height ?? undefined);
+  const height = osmBuildingHeight(tags.height ?? undefined, tags["building:levels"] ?? undefined);
+  if (!detail) return { height };
+
+  const part = Boolean(tags["building:part"] && tags["building:part"] !== "no");
+  const rawMinimum = meters(tags.min_height ?? undefined) || positive(tags["building:min_level"]) * 3;
+  const total = taggedHeight ? height : Math.max(height, rawMinimum + 3);
+  const minHeight = Math.min(rawMinimum, total - 0.1);
+  const shape = tags["roof:shape"];
+  if (shape !== "gabled" && shape !== "hipped" && shape !== "pyramidal" && shape !== "skillion") {
+    return { height: total, part, minHeight };
+  }
+
+  const angle = positive(tags["roof:angle"]);
+  return {
+    height: total, part, minHeight,
+    roof: {
+      shape,
+      height: meters(tags["roof:height"] ?? undefined) || positive(tags["roof:levels"]) * 3,
+      angle: angle > 0 && angle < 90 ? angle : 30,
+      direction: roofDirection(tags["roof:direction"]),
+      across: tags["roof:orientation"] === "across",
+      includedInHeight: taggedHeight > 0,
+    },
+  };
+}
+
 function samePoint(a: OsmPoint, b: OsmPoint) {
   return a.lat === b.lat && a.lon === b.lon;
+}
+
+function isNorthAmericanExtent(bounds: Extent) {
+  return bounds.xmin >= -172 && bounds.xmax <= -49 && bounds.ymin >= 25 && bounds.ymax <= 83;
 }
 
 function overpassEndpoint(bounds: Extent) {
   // The regional Overpass instances use Geofabrik extracts. Use the global
   // endpoint for selections near continental boundaries or in other regions.
+  if (isNorthAmericanExtent(bounds)) {
+    return "https://ovp.dresel.systems/api-na/interpreter";
+  }
   if (bounds.xmin >= -13 && bounds.xmax <= 40 && bounds.ymin >= 37 && bounds.ymax <= 72) {
     return "https://ovp.dresel.systems/api/interpreter";
   }
@@ -90,7 +160,7 @@ function orientedRing(points: OsmPoint[], clockwise: boolean) {
   return (signedArea < 0) === clockwise ? ring : ring.reverse();
 }
 
-export function readOverpassBuildings(elements: OsmElement[]): OsmBuilding[] {
+export function readOverpassBuildings(elements: OsmElement[], detail = true): OsmBuilding[] {
   const buildings: OsmBuilding[] = [];
   const relationOuterWays = new Set<number>();
   for (const element of elements) {
@@ -105,7 +175,7 @@ export function readOverpassBuildings(elements: OsmElement[]): OsmBuilding[] {
     buildings.push({
       id: `relation/${element.id}`,
       footprint: new Polygon({ spatialReference: SpatialReference.WGS84, rings: [...outer, ...inner] }),
-      height: osmBuildingHeight(element.tags?.height, element.tags?.["building:levels"]),
+      ...readOsmBuildingTags(element.tags ?? {}, detail),
     });
   }
   for (const element of elements) {
@@ -114,13 +184,13 @@ export function readOverpassBuildings(elements: OsmElement[]): OsmBuilding[] {
     if (ring.length) buildings.push({
       id: `way/${element.id}`,
       footprint: new Polygon({ spatialReference: SpatialReference.WGS84, rings: [ring] }),
-      height: osmBuildingHeight(element.tags?.height, element.tags?.["building:levels"]),
+      ...readOsmBuildingTags(element.tags ?? {}, detail),
     });
   }
   return buildings;
 }
 
-export async function queryOsmBuildings(extent: Extent, limit: number, signal: AbortSignal) {
+export async function queryOsmBuildings(extent: Extent, signal: AbortSignal, detail = true) {
   const bounds = project(extent, SpatialReference.WGS84) as Extent | null;
   if (bounds == null || bounds.xmin < -180 || bounds.xmax > 180 || bounds.xmin >= bounds.xmax || bounds.ymin >= bounds.ymax) {
     throw new Error("Choose a selection within a single world wrap to download OpenStreetMap buildings.");
@@ -130,8 +200,8 @@ export async function queryOsmBuildings(extent: Extent, limit: number, signal: A
     throw new Error("Select an area under 1.5 km across to download OpenStreetMap buildings.");
   }
 
-  // Use the live OSM replica in the US and Canada and Overpass elsewhere.
-  if (bounds.xmin >= -172 && bounds.xmax <= -49 && bounds.ymin >= 25 && bounds.ymax <= 83) {
+  // The replica has roof tags but separate building parts come from Overpass.
+  if (isNorthAmericanExtent(bounds)) {
     const layer = new FeatureLayer({ url: northAmericaBuildings });
     try {
       await layer.load({ signal });
@@ -139,24 +209,56 @@ export async function queryOsmBuildings(extent: Extent, limit: number, signal: A
       query.geometry = bounds;
       query.spatialRelationship = "intersects";
       query.where = "building <> 'no'";
-      query.returnGeometry = true;
-      query.outSpatialReference = SpatialReference.WGS84;
-      query.outFields = ["osm_id", "height", "building_levels"];
-      query.num = limit + 1;
-      const result = await layer.queryFeatures(query, { signal });
-      return result.features.flatMap((feature): OsmBuilding[] => feature.geometry?.type === "polygon" ? [{
-        id: String(feature.attributes.osm_id ?? feature.getObjectId()),
-        footprint: feature.geometry as Polygon,
-        height: osmBuildingHeight(feature.attributes.height, feature.attributes.building_levels),
-      }] : []);
+      // Query the matching IDs first so the per-response record limit cannot cut the selection short.
+      const ids = await layer.queryObjectIds(query, { signal });
+      const pageSize = Math.min(layer.capabilities.query.maxRecordCount || 250, 250);
+      const page = layer.createQuery();
+      page.returnGeometry = true;
+      page.outSpatialReference = SpatialReference.WGS84;
+      page.outFields = detail ? ["osm_id", ...Object.values(replicaTags)] : ["osm_id", "height", "building_levels"];
+      const buildings: OsmBuilding[] = [];
+      for (let start = 0; start < ids.length; start += pageSize) {
+        signal.throwIfAborted();
+        page.objectIds = ids.slice(start, start + pageSize);
+        const result = await layer.queryFeatures(page, { signal });
+        if (result.exceededTransferLimit) {
+          throw new Error("The building service returned an incomplete page. Retry or select a smaller area.");
+        }
+        for (const feature of result.features) {
+          if (feature.geometry?.type !== "polygon") continue;
+          buildings.push({
+            id: String(feature.attributes.osm_id ?? feature.getObjectId()),
+            footprint: feature.geometry as Polygon,
+            ...readOsmBuildingTags(Object.fromEntries(
+              Object.entries(replicaTags).map(([tag, field]) => [tag, feature.attributes[field]])
+            ), detail),
+          });
+        }
+      }
+      if (!detail) return { buildings };
+      try {
+        const parts = await queryOverpass(bounds, signal, "parts");
+        return { buildings: [...buildings, ...parts] };
+      } catch {
+        signal.throwIfAborted();
+        return { buildings, partsUnavailable: true };
+      }
     } finally {
       layer.destroy();
     }
   }
 
+  return { buildings: await queryOverpass(bounds, signal, detail ? "all" : "outlines") };
+}
+
+async function queryOverpass(bounds: Extent, signal: AbortSignal, mode: "parts" | "all" | "outlines") {
   const bbox = [bounds.ymin, bounds.xmin, bounds.ymax, bounds.xmax].map(value => value.toFixed(7)).join(",");
-  const maxResults = limit * 2 + 1;
-  const query = `[out:json][timeout:18];(way["building"]["building"!="no"](${bbox});relation["type"="multipolygon"]["building"]["building"!="no"](${bbox}););out geom ${maxResults};`;
+  const tags = mode === "all" ? ["building", "building:part"] : [mode === "parts" ? "building:part" : "building"];
+  const selectors = tags.map(tag => {
+    const filter = `["${tag}"]["${tag}"!="no"](${bbox});`;
+    return `way${filter}relation["type"="multipolygon"]${filter}`;
+  });
+  const query = `[out:json][timeout:18];(${selectors.join("")});out geom;`;
   const response = await fetch(`${overpassEndpoint(bounds)}?${new URLSearchParams({ data: query })}`, {
     signal: AbortSignal.any([signal, AbortSignal.timeout(25000)]),
   }).catch(() => {
@@ -166,9 +268,5 @@ export async function queryOsmBuildings(extent: Extent, limit: number, signal: A
   if (!response.ok) throw new Error("OpenStreetMap building data is temporarily unavailable. Retry this selection.");
   const data = await response.json() as { elements?: OsmElement[]; remark?: string };
   if (!data.elements || data.remark) throw new Error("OpenStreetMap returned an incomplete response. Retry this selection.");
-  const buildings = readOverpassBuildings(data.elements);
-  if (data.elements.length >= maxResults || buildings.length > limit) {
-    throw new Error(`Select a smaller area with at most ${limit} OpenStreetMap buildings.`);
-  }
-  return buildings;
+  return readOverpassBuildings(data.elements, mode !== "outlines");
 }

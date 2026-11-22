@@ -49,9 +49,11 @@ import FootprintControl from "./footprint-control";
 import { OSM_ATTRIBUTION, OSM_ATTRIBUTION_URL, OSM_SCENE_ID } from "~/data/osm-scene";
 import { queryOsmBuildings } from "~/hooks/queries/download/osm-building-query";
 import ModelViewerDialog from "~/components/model-viewer-dialog";
+import { PRINT_STL_HEADER_SUFFIX } from "~/utils/print-dimensions";
 
 type ExportFormat = 'glb' | 'stl';
 const noSceneFeatures: ExportModelOptions["features"] = new Map();
+const noBuildings: NonNullable<ExportModelOptions["osmBuildings"]> = [];
 
 interface ExportSettingsProps {
   state: BlockState['state'];
@@ -73,7 +75,11 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
   });
   
   const [filename, setFilename] = useState("")
-  const [exportFormat, setExportFormat] = useState<ExportFormat>('glb');
+  const [exportFormat, setExportFormat] = useState<ExportFormat>(isOsm ? 'stl' : 'glb');
+  const [includeBuildings, setIncludeBuildings] = useState(true);
+  const [buildingDetail, setBuildingDetail] = useState(true);
+  const [printSize, setPrintSize] = useState("100");
+  const [baseThickness, setBaseThickness] = useState("3");
   const [includeOriginMarker, setIncludeOriginMarker] = useState(!isOsm);
   const [extrudeBase, setExtrudeBase] = useState(true);
   const [extrusionDepth, setExtrusionDepth] = useState("50");
@@ -89,13 +95,18 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
   const selectionExtent = selection?.extent;
   const isHexagon = useAccessorValue(() => store.footprintShape) === "hexagon";
   const isIdle = editingState === "idle";
+  const isPrintExport = isOsm && exportFormat === "stl";
+  const longestSideMm = Number(printSize);
+  const baseThicknessMm = Number(baseThickness);
+  const printDimensions = isPrintExport && [longestSideMm, baseThicknessMm].every(value => Number.isFinite(value) && value > 0)
+    ? { longestSideMm, baseThicknessMm } : undefined;
   const modelOriginQuery = usePreciseOriginElevationInfo();
   const exportHexagon = isHexagon && hexagon?.selectionExtent.equals(selectionExtent) ? hexagon : undefined;
   const currentExtent = isHexagon ? exportHexagon?.sourceExtent : selectionExtent;
   const osmQuery = useQuery({
-    queryKey: ["osm-export-buildings", currentExtent?.toJSON()],
-    queryFn: ({ signal }) => queryOsmBuildings(currentExtent!, MAX_FEATURES, signal),
-    enabled: isOsm && isIdle && currentExtent != null,
+    queryKey: ["osm-export-buildings", currentExtent?.toJSON(), buildingDetail],
+    queryFn: ({ signal }) => queryOsmBuildings(currentExtent!, signal, buildingDetail),
+    enabled: isOsm && includeBuildings && isIdle && currentExtent != null,
     placeholderData: undefined,
     retry: false,
     refetchOnWindowFocus: false,
@@ -106,25 +117,27 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
     !isOsm && isIdle && (isHexagon ? exportHexagon != null : !rectangleOverLimit),
     isHexagon ? exportHexagon?.sourceExtent ?? null : undefined,
   );
-  const buildings = isOsm ? osmQuery.data : undefined;
+  const buildings = isOsm ? (includeBuildings ? osmQuery.data?.buildings : noBuildings) : undefined;
   const features = isOsm ? (buildings && noSceneFeatures) : featureQuery.data;
   const modelOrigin = modelOriginQuery.isPlaceholderData ? undefined : modelOriginQuery.data;
+  const exportOrigin = isPrintExport ? currentExtent?.center : modelOrigin;
   const featureCount = features && Array.from(features.values()).reduce((count, layer) => count + layer.length, 0);
-  const hasTooManyFeatures = isOsm ? (buildings?.length ?? 0) > MAX_FEATURES
-    : isHexagon ? featureQuery.error instanceof ExportFeatureLimitError || (featureCount ?? 0) > MAX_FEATURES
-      : rectangleOverLimit;
-  const featuresError = isOsm ? osmQuery.error : featureQuery.error;
+  const hasTooManyFeatures = !isOsm && (isHexagon
+    ? featureQuery.error instanceof ExportFeatureLimitError || (featureCount ?? 0) > MAX_FEATURES
+    : rectangleOverLimit);
+  const featuresError = isOsm ? (includeBuildings ? osmQuery.error : null) : featureQuery.error;
   const exportParams: ExportModelOptions | undefined =
-    isIdle && currentExtent && features && modelOrigin && !hasTooManyFeatures && !featuresError ? {
+    isIdle && currentExtent && features && exportOrigin && !hasTooManyFeatures && !featuresError && (!isPrintExport || printDimensions) ? {
       scene,
       extent: currentExtent,
       features,
-      origin: modelOrigin,
-      includeOriginMarker,
-      extrudeBase,
-      extrusionDepth: Math.max(0, Number.parseFloat(extrusionDepth)) || 50,
+      origin: exportOrigin,
+      includeOriginMarker: !isPrintExport && includeOriginMarker,
+      extrudeBase: isPrintExport || extrudeBase,
+      extrusionDepth: isPrintExport ? undefined : Math.max(0, Number.parseFloat(extrusionDepth)) || 50,
       hexagon: exportHexagon,
       osmBuildings: buildings,
+      printDimensions,
     } : undefined;
   const sizeQuery = useExportSizeQuery(exportParams);
 
@@ -134,8 +147,10 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
   else if (hasTooManyFeatures) fileSizeString = "Too many features. Draw a smaller selection.";
   else if (footprintError) fileSizeString = footprintError.message;
   else if (featuresError) fileSizeString = isOsm ? featuresError.message : "Could not query city features. Try the selection again.";
-  else if (modelOriginQuery.error) fileSizeString = "Could not read the origin elevation. Move the model origin and retry.";
+  else if (isPrintExport && !printDimensions) fileSizeString = "Enter a positive print size and base thickness.";
+  else if (!isPrintExport && modelOriginQuery.error) fileSizeString = "Could not read the origin elevation. Move the model origin and retry.";
   else if (exportParams && fileSize != null) fileSizeString = `${(fileSize * 1e-6).toFixed(2)} MB`;
+  else if (isOsm && includeBuildings && osmQuery.isFetching) fileSizeString = "Loading OpenStreetMap buildings…";
   else if (!isIdle || featureQuery.isFetching || osmQuery.isFetching || modelOriginQuery.isFetching || footprintLoading || sizeQuery.isFetching) {
     fileSizeString = "Calculating…";
   }
@@ -178,7 +193,8 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
             binary: true,
             scale: 1,
             mergeGeometries: true,
-            binaryHeader: isOsm ? OSM_ATTRIBUTION : undefined,
+            printLongestSideMm: exportParams.printDimensions?.longestSideMm,
+            binaryHeader: isPrintExport ? OSM_ATTRIBUTION + PRINT_STL_HEADER_SUFFIX : undefined,
           });
         } catch {
           toast({ key: "stl-conversion-failed", title: "Export error", message: "Could not convert the model to STL. Try the export again.", severity: "danger" });
@@ -235,11 +251,34 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
       <ul className="space-y-4">
         {isOsm && (
           <li className="text-xs">
-            Buildings use OpenStreetMap footprints and recorded or estimated heights.
-            {buildings?.length === 0 && <p className="mt-1">This area has no mapped buildings. The export will contain terrain.</p>}
-            <p className="mt-1">
-              Credit <a className="underline" href={OSM_ATTRIBUTION_URL} target="_blank" rel="noreferrer">OpenStreetMap contributors</a> when sharing a print.
-            </p>
+            <CalciteLabel scale="s" layout="inline">
+              <CalciteCheckbox
+                checked={includeBuildings}
+                disabled={isExporting}
+                onCalciteCheckboxChange={(event) => setIncludeBuildings(event.target.checked)}
+              />
+              Include OpenStreetMap buildings
+            </CalciteLabel>
+            {includeBuildings ? (
+              <>
+                <CalciteLabel scale="s" layout="inline">
+                  <CalciteCheckbox checked={buildingDetail} disabled={isExporting}
+                    onCalciteCheckboxChange={(event) => setBuildingDetail(event.target.checked)} />
+                  Use mapped roofs and building parts
+                </CalciteLabel>
+                {buildingDetail && <p>Supported roofs and parts are used where mapped. Other roofs are flat.</p>}
+                {osmQuery.data?.partsUnavailable && (
+                  <p role="status" className="mt-1">Building parts are temporarily unavailable. The export can still use mapped roof shapes.</p>
+                )}
+                {buildings?.length === 0 && <p className="mt-1">This area has no mapped buildings. The export will contain terrain.</p>}
+                {!!buildings?.length && (
+                  <p className="mt-1">{buildings.length.toLocaleString()} building features in the source area.</p>
+                )}
+                <p className="mt-1">
+                  Credit <a className="underline" href={OSM_ATTRIBUTION_URL} target="_blank" rel="noreferrer">OpenStreetMap contributors</a> when sharing a print.
+                </p>
+              </>
+            ) : <p>Terrain only.</p>}
           </li>
         )}
         <li>
@@ -253,6 +292,7 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
             <p className="font-medium">Export format</p>
             <CalciteSegmentedControl
               scale="s"
+              disabled={isExporting}
               onCalciteSegmentedControlChange={(e) => setExportFormat(e.target.value as ExportFormat)}
               onClick={(e) => e.stopPropagation()}
             >
@@ -274,13 +314,30 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
               </CalciteSegmentedControlItem>
             </CalciteSegmentedControl>
           </CalciteLabel>
-          {exportFormat === 'stl' && (
+          {exportFormat === 'stl' && !isPrintExport && (
             <div className="mt-1 p-2 bg-blue-50 rounded text-xs text-blue-800">
               <CalciteIcon icon="information" scale="s" className="inline mr-1" />
               STL format is optimized for 3D printing
             </div>
           )}
         </li>
+        {isPrintExport && (
+          <li>
+            <div className="grid grid-cols-2 gap-3">
+              <CalciteLabel scale="s">
+                <p className="font-medium">Longest side (mm)</p>
+                <CalciteInputNumber scale="s" value={printSize} min={0.1} step="any" disabled={isExporting}
+                  onCalciteInputNumberChange={(event) => setPrintSize(event.target.value)} />
+              </CalciteLabel>
+              <CalciteLabel scale="s">
+                <p className="font-medium">Base thickness (mm)</p>
+                <CalciteInputNumber scale="s" value={baseThickness} min={0.1} step="any" disabled={isExporting}
+                  onCalciteInputNumberChange={(event) => setBaseThickness(event.target.value)} />
+              </CalciteLabel>
+            </div>
+            <p className="text-xs">The longest horizontal dimension sets the scale. The flat base sits at Z=0 in the slicer.</p>
+          </li>
+        )}
         <li>
           <CalciteLabel 
             scale="s"
@@ -297,7 +354,7 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
             />
           </CalciteLabel>
         </li>
-        <li>
+        {!isPrintExport && <li>
           <CalciteLabel 
             scale="s" 
             layout="inline"
@@ -313,8 +370,8 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
           {isHexagon && includeOriginMarker && (
             <p className="text-xs text-gray-600">The origin marker is included when it fits inside the hexagon.</p>
           )}
-        </li>
-        <li>
+        </li>}
+        {!isPrintExport && <li>
           <CalciteLabel 
             scale="s" 
             layout="inline"
@@ -327,8 +384,8 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
             />
             Extrude terrain base downward
           </CalciteLabel>
-        </li>
-        {extrudeBase && (
+        </li>}
+        {!isPrintExport && extrudeBase && (
           <li>
             <CalciteLabel scale="s">
               <p className="font-medium">Extrusion depth (meters)</p>
@@ -351,7 +408,10 @@ export default function ExportSettings({ dispatch, state, hexagon, footprintErro
             <p className="font-medium">{exportFormat === "stl" ? "GLB size estimate" : "File size"}</p>
             <p aria-live="polite">{fileSizeString}</p>
           </CalciteLabel>
-          {isOsm && osmQuery.error && (
+          {isOsm && includeBuildings && featuresError && (
+            <p className="mb-2 text-xs">Draw a smaller area, switch off mapped detail, or export terrain only.</p>
+          )}
+          {isOsm && includeBuildings && osmQuery.error && (
             <CalciteButton appearance="outline" scale="s" onClick={() => void osmQuery.refetch()}>
               Retry building data
             </CalciteButton>
